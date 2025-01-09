@@ -8,12 +8,38 @@ import {
   Typography,
   CircularProgress,
   Alert,
+  Tabs,
+  Tab,
 } from '@mui/material';
 import { ForecastModelAPI } from '../services/api';
 import { RollingForecastInputParams, ModelOutputParams } from '../types/dto';
+import ModelEditor from './ModelEditor';
 
 interface ModelInputProps {
   onModelOutput: (output: ModelOutputParams) => void;
+}
+
+interface TabPanelProps {
+  children?: React.ReactNode;
+  index: number;
+  value: number;
+}
+
+function TabPanel(props: TabPanelProps) {
+  const { children, value, index, ...other } = props;
+  return (
+    <div
+      role="tabpanel"
+      hidden={value !== index}
+      {...other}
+    >
+      {value === index && (
+        <Box sx={{ p: 3 }}>
+          {children}
+        </Box>
+      )}
+    </div>
+  );
 }
 
 const ModelInput: React.FC<ModelInputProps> = ({ onModelOutput }) => {
@@ -21,6 +47,11 @@ const ModelInput: React.FC<ModelInputProps> = ({ onModelOutput }) => {
   const [error, setError] = useState<string | null>(null);
   const [modelId, setModelId] = useState<string>('');
   const [modelData, setModelData] = useState<RollingForecastInputParams | null>(null);
+  const [tabValue, setTabValue] = useState(0);
+
+  const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
+    setTabValue(newValue);
+  };
 
   const handleLoadModel = async () => {
     if (!modelId) {
@@ -35,6 +66,7 @@ const ModelInput: React.FC<ModelInputProps> = ({ onModelOutput }) => {
       const data = await ForecastModelAPI.loadModel(modelId);
       console.log('Loaded model data:', data);
       setModelData(data);
+      setTabValue(1); // Switch to editor tab after loading
     } catch (err) {
       console.error('Load model error:', err);
       setError('Failed to load model');
@@ -57,7 +89,6 @@ const ModelInput: React.FC<ModelInputProps> = ({ onModelOutput }) => {
       const output = await ForecastModelAPI.runModel(modelData);
       console.log('Received model output:', output);
       
-      // Check for either Output or Outputs property
       if (!output || (!(output as any).Output && !(output as any).Outputs)) {
         throw new Error('Invalid output format received');
       }
@@ -88,6 +119,10 @@ const ModelInput: React.FC<ModelInputProps> = ({ onModelOutput }) => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleModelUpdate = (updatedModel: RollingForecastInputParams) => {
+    setModelData(updatedModel);
   };
 
   return (
@@ -149,16 +184,29 @@ const ModelInput: React.FC<ModelInputProps> = ({ onModelOutput }) => {
 
           {modelData && (
             <Grid item xs={12}>
-              <Typography variant="subtitle1" gutterBottom>
-                Model Data Preview
-              </Typography>
-              <Paper variant="outlined">
-                <Box p={2}>
-                  <pre style={{ overflow: 'auto', maxHeight: '300px' }}>
-                    {JSON.stringify(modelData, null, 2)}
-                  </pre>
-                </Box>
-              </Paper>
+              <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+                <Tabs value={tabValue} onChange={handleTabChange}>
+                  <Tab label="Preview" />
+                  <Tab label="Edit" />
+                </Tabs>
+              </Box>
+
+              <TabPanel value={tabValue} index={0}>
+                <Paper variant="outlined">
+                  <Box p={2}>
+                    <pre style={{ overflow: 'auto', maxHeight: '300px' }}>
+                      {JSON.stringify(modelData, null, 2)}
+                    </pre>
+                  </Box>
+                </Paper>
+              </TabPanel>
+
+              <TabPanel value={tabValue} index={1}>
+                <ModelEditor 
+                  modelData={modelData} 
+                  onModelUpdate={handleModelUpdate}
+                />
+              </TabPanel>
             </Grid>
           )}
         </Grid>
