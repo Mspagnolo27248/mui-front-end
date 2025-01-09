@@ -27,12 +27,151 @@ interface ModelEditorProps {
   onModelUpdate: (updatedModel: RollingForecastInputParams) => void;
 }
 
+interface ScheduleMatrixItem {
+  Unit: string;
+  Charge_ProductCode: string;
+  dates: { [key: string]: number };
+}
+
+interface ScheduleData {
+  [unit: string]: {
+    [product: string]: {
+      [date: string]: number;
+    };
+  };
+}
+
 const ModelEditor: React.FC<ModelEditorProps> = ({ modelData, onModelUpdate }) => {
   const [localModel, setLocalModel] = useState<RollingForecastInputParams>(modelData);
+  const [scheduleMatrix, setScheduleMatrix] = useState<ScheduleMatrixItem[]>([]);
 
   useEffect(() => {
     setLocalModel(modelData);
+    convertScheduleToMatrix(modelData.ScheduleItem || []);
   }, [modelData]);
+
+  const convertScheduleToMatrix = (scheduleItems: any) => {
+    const matrix: { [key: string]: ScheduleMatrixItem } = {};
+    
+    // Handle the nested structure: unit -> product -> dates
+    if (scheduleItems && typeof scheduleItems === 'object') {
+      // Iterate over units (CRUDE, EXTRACT, etc.)
+      Object.entries(scheduleItems).forEach(([unit, products]) => {
+        // Iterate over products for each unit
+        Object.entries(products as object).forEach(([product, dates]) => {
+          const key = `${unit}-${product}`;
+          if (!matrix[key]) {
+            matrix[key] = {
+              Unit: unit,
+              Charge_ProductCode: product,
+              dates: {}
+            };
+          }
+          // Add all dates for this unit-product combination
+          Object.entries(dates as object).forEach(([date, bbls]) => {
+            if (typeof bbls === 'number') {
+              matrix[key].dates[date] = bbls;
+            }
+          });
+        });
+      });
+    }
+
+    setScheduleMatrix(Object.values(matrix));
+  };
+
+  const convertMatrixToSchedule = (matrix: ScheduleMatrixItem[]): any => {
+    const schedule: any = {};
+    
+    matrix.forEach(row => {
+      // Initialize unit if it doesn't exist
+      if (!schedule[row.Unit]) {
+        schedule[row.Unit] = {};
+      }
+      
+      // Initialize product if it doesn't exist
+      if (!schedule[row.Unit][row.Charge_ProductCode]) {
+        schedule[row.Unit][row.Charge_ProductCode] = {};
+      }
+      
+      // Add all non-zero values for dates
+      Object.entries(row.dates).forEach(([date, bbls]) => {
+        if (bbls > 0) {
+          schedule[row.Unit][row.Charge_ProductCode][date] = bbls;
+        }
+      });
+    });
+
+    return schedule;
+  };
+
+  const handleScheduleMatrixChange = (rowIndex: number, date: string) => (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const newMatrix = [...scheduleMatrix];
+    newMatrix[rowIndex].dates[date] = parseFloat(event.target.value) || 0;
+    setScheduleMatrix(newMatrix);
+
+    setLocalModel({
+      ...localModel,
+      ScheduleItem: convertMatrixToSchedule(newMatrix)
+    });
+  };
+
+  const addScheduleRow = () => {
+    setScheduleMatrix([
+      ...scheduleMatrix,
+      {
+        Unit: '',
+        Charge_ProductCode: '',
+        dates: {}
+      }
+    ]);
+  };
+
+  const removeScheduleRow = (index: number) => {
+    const newMatrix = scheduleMatrix.filter((_, i) => i !== index);
+    setScheduleMatrix(newMatrix);
+    setLocalModel({
+      ...localModel,
+      ScheduleItem: convertMatrixToSchedule(newMatrix)
+    });
+  };
+
+  const handleScheduleUnitChange = (index: number) => (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const newMatrix = [...scheduleMatrix];
+    newMatrix[index].Unit = event.target.value;
+    setScheduleMatrix(newMatrix);
+    setLocalModel({
+      ...localModel,
+      ScheduleItem: convertMatrixToSchedule(newMatrix)
+    });
+  };
+
+  const handleScheduleProductChange = (index: number) => (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const newMatrix = [...scheduleMatrix];
+    newMatrix[index].Charge_ProductCode = event.target.value;
+    setScheduleMatrix(newMatrix);
+    setLocalModel({
+      ...localModel,
+      ScheduleItem: convertMatrixToSchedule(newMatrix)
+    });
+  };
+
+  const getDates = () => {
+    const dates: number[] = [];
+    const startDate = localModel.ModelMetaData.startDate;
+    const runDays = localModel.ModelMetaData.runDays;
+
+    for (let i = 0; i < runDays; i++) {
+      dates.push(startDate + i);
+    }
+    return dates;
+  };
 
   const handleMetaDataChange = (field: keyof typeof localModel.ModelMetaData) => (
     event: React.ChangeEvent<HTMLInputElement>
@@ -69,25 +208,6 @@ const ModelEditor: React.FC<ModelEditorProps> = ({ modelData, onModelUpdate }) =
     });
   };
 
-  const handleScheduleChange = (index: number, field: keyof ScheduleItem) => (
-    event: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const newSchedule = [...localModel.ScheduleItem];
-    const value = field === 'bbls' || field === 'Date'
-      ? parseFloat(event.target.value)
-      : event.target.value;
-
-    newSchedule[index] = {
-      ...newSchedule[index],
-      [field]: value
-    };
-
-    setLocalModel({
-      ...localModel,
-      ScheduleItem: newSchedule
-    });
-  };
-
   const addProduct = () => {
     const newProduct: ProductsForModelItem = {
       ProductCode: '',
@@ -108,10 +228,6 @@ const ModelEditor: React.FC<ModelEditorProps> = ({ modelData, onModelUpdate }) =
       ...localModel,
       ProductsForModelItem: newProducts
     });
-  };
-
-  const handleSave = () => {
-    onModelUpdate(localModel);
   };
 
   return (
@@ -219,11 +335,76 @@ const ModelEditor: React.FC<ModelEditorProps> = ({ modelData, onModelUpdate }) =
         </AccordionDetails>
       </Accordion>
 
+      <Accordion>
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+          <Typography>Schedule Matrix</Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <TableContainer component={Paper}>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Unit</TableCell>
+                  <TableCell>Product</TableCell>
+                  {getDates().map(date => (
+                    <TableCell key={date} align="right">{date}</TableCell>
+                  ))}
+                  <TableCell>Actions</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {scheduleMatrix.map((row, rowIndex) => (
+                  <TableRow key={rowIndex}>
+                    <TableCell>
+                      <TextField
+                        size="small"
+                        value={row.Unit}
+                        onChange={handleScheduleUnitChange(rowIndex)}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <TextField
+                        size="small"
+                        value={row.Charge_ProductCode}
+                        onChange={handleScheduleProductChange(rowIndex)}
+                      />
+                    </TableCell>
+                    {getDates().map(date => (
+                      <TableCell key={date} align="right">
+                        <TextField
+                          size="small"
+                          type="number"
+                          value={row.dates[date] || ''}
+                          onChange={handleScheduleMatrixChange(rowIndex, date.toString())}
+                          sx={{ width: '80px' }}
+                        />
+                      </TableCell>
+                    ))}
+                    <TableCell>
+                      <IconButton onClick={() => removeScheduleRow(rowIndex)} size="small">
+                        <DeleteIcon />
+                      </IconButton>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+          <Button
+            startIcon={<AddIcon />}
+            onClick={addScheduleRow}
+            sx={{ mt: 2 }}
+          >
+            Add Schedule Row
+          </Button>
+        </AccordionDetails>
+      </Accordion>
+
       <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end' }}>
         <Button
           variant="contained"
           color="primary"
-          onClick={handleSave}
+          onClick={() => onModelUpdate(localModel)}
         >
           Save Changes
         </Button>
